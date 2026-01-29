@@ -82,6 +82,20 @@ PRIORITY_SURCHARGE = {
 }
 
 
+def render_dataframe(df: pd.DataFrame, **kwargs) -> None:
+    try:
+        st.dataframe(df, width="stretch", **kwargs)
+    except TypeError:
+        st.dataframe(df, use_container_width=True, **kwargs)
+
+
+def render_pydeck(deck: object) -> None:
+    try:
+        st.pydeck_chart(deck, width="stretch")
+    except TypeError:
+        st.pydeck_chart(deck, use_container_width=True)
+
+
 @st.cache_data(show_spinner=False)
 def load_dataframe() -> pd.DataFrame:
     return data_utils.load_traffic_data(DATA_PATH)
@@ -374,7 +388,7 @@ with story_col:
             },
         ]
     )
-    st.dataframe(corridor_df, hide_index=True, width="stretch")
+    render_dataframe(corridor_df, hide_index=True)
 
     st.markdown("### Recent speed trend")
     combined_trend = (
@@ -392,7 +406,7 @@ with story_col:
 with map_col:
     st.subheader("Route snapshot")
     if route_geom.deck:
-        st.pydeck_chart(route_geom.deck, width="stretch")
+        render_pydeck(route_geom.deck)
         st.caption(f"Approximate aerial distance: {distance_km:.1f} km")
     else:
         st.info("Map preview unavailable for the chosen areas.")

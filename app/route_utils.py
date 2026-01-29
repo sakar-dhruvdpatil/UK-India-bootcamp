@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from typing import Dict, List, Optional, Tuple
 
 import pydeck as pdk
+import requests
 from pyproj import Geod
 
 GEOD = Geod(ellps="WGS84")
@@ -22,6 +23,7 @@ _DEFAULT_LAT = 12.9716
 _DEFAULT_LON = 77.5946
 _MAPBOX_STYLE = "mapbox://styles/mapbox/light-v9"
 _FALLBACK_STYLE = "https://basemaps.cartocdn.com/gl/positron-gl-style/style.json"
+_OSRM_ROUTE_URL = "https://router.project-osrm.org/route/v1/driving/{start_lon},{start_lat};{end_lon},{end_lat}"  # noqa: E501
 
 
 def _fallback_coords(name: str) -> Dict[str, float]:
@@ -66,6 +68,45 @@ def _resolve_basemap() -> Tuple[str, Optional[str]]:
     return _FALLBACK_STYLE, "carto"
 
 
+def _geodesic_path(start: Dict[str, float], end: Dict[str, float], steps: int = 30) -> List[List[float]]:
+    if steps <= 0:
+        return [[start["lon"], start["lat"]], [end["lon"], end["lat"]]]
+    intermediates = GEOD.npts(start["lon"], start["lat"], end["lon"], end["lat"], steps)
+    path = [[start["lon"], start["lat"]]]
+    path.extend([[lon, lat] for lon, lat in intermediates])
+    path.append([end["lon"], end["lat"]])
+    return path
+
+
+def _fetch_route_path(start: Dict[str, float], end: Dict[str, float]) -> Optional[List[List[float]]]:
+    url = _OSRM_ROUTE_URL.format(
+        start_lon=start["lon"],
+        start_lat=start["lat"],
+        end_lon=end["lon"],
+        end_lat=end["lat"],
+    )
+    params = {
+        "overview": "full",
+        "geometries": "geojson",
+    }
+    try:
+        response = requests.get(url, params=params, timeout=5)
+        response.raise_for_status()
+        payload = response.json()
+    except requests.RequestException:
+        return None
+
+    routes = payload.get("routes")
+    if not routes:
+        return None
+    first_route = routes[0]
+    geometry = first_route.get("geometry", {})
+    coordinates = geometry.get("coordinates")
+    if not coordinates:
+        return None
+    return [[float(lon), float(lat)] for lon, lat in coordinates]
+
+
 def build_route_deck(start_area: str, end_area: str) -> RouteGeometry:
     start = get_coords(start_area)
     end = get_coords(end_area)
@@ -78,12 +119,13 @@ def build_route_deck(start_area: str, end_area: str) -> RouteGeometry:
 
     distance_km = compute_distance_km(start_area, end_area)
 
+    route_path = _fetch_route_path(start, end)
+    if not route_path:
+        route_path = _geodesic_path(start, end)
+
     line_data: List[Dict[str, List[float]]] = [
         {
-            "path": [
-                [start["lon"], start["lat"]],
-                [end["lon"], end["lat"]],
-            ]
+            "path": route_path,
         }
     ]
     point_data = [
